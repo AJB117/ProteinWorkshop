@@ -1,4 +1,5 @@
 """Modified from TorchDrug."""
+
 import os
 from typing import Dict, List, Optional, Set, Tuple, Union
 
@@ -186,9 +187,7 @@ class EvolutionaryScaleModeling(nn.Module):
         return {"residues", "id", "coords", "batch"}
 
     @typechecker
-    def load_weight(
-        self, path: str, model: str
-    ) -> Tuple[nn.Module, esm.data.Alphabet]:
+    def load_weight(self, path: str, model: str) -> Tuple[nn.Module, esm.data.Alphabet]:
         """
         Load ESM model weights and their corresponding alphabet.
 
@@ -199,7 +198,8 @@ class EvolutionaryScaleModeling(nn.Module):
         if model not in self.model_names:
             raise ValueError(f"Unknown model {model}")
         model_file = _download(self.url[model], path, md5=self.md5[model])
-        model_data = torch.load(model_file, map_location="cpu")
+        # model_data = torch.load(model_file, map_location="cpu")
+        model_data = torch.load(model_file, map_location=torch.device("cuda"))
         if model != "ESM-1v" and not model.startswith("ESM-2"):
             regression_model = f"{model}-regression"
             regression_file = _download(
@@ -207,7 +207,10 @@ class EvolutionaryScaleModeling(nn.Module):
                 path,
                 md5=self.md5[regression_model],
             )
-            regression_data = torch.load(regression_file, map_location="cpu")
+            # regression_data = torch.load(regression_file, map_location="cpu")
+            regression_data = torch.load(
+                regression_file, map_location=torch.device("cuda")
+            )
         else:
             regression_data = None
         model_name = os.path.basename(self.url[model])
@@ -226,10 +229,7 @@ class EvolutionaryScaleModeling(nn.Module):
         """
         device = device if device is not None else batch.coords.device
 
-        seqs = [
-            "".join([self.residue_map[s] for s in seq])
-            for seq in batch.residues
-        ]
+        seqs = ["".join([self.residue_map[s] for s in seq]) for seq in batch.residues]
         seqs = ["".join(seq) for seq in seqs]
         data = list(tuple(zip(batch.id, seqs)))
 
@@ -243,9 +243,7 @@ class EvolutionaryScaleModeling(nn.Module):
         node_embedding = node_embedding[:, 1 : node_embedding.shape[1] - 1, :]
 
         _, batch_mask = to_dense_batch(
-            x=torch.rand(
-                batch.coords.shape[0], self.output_dim, device=device
-            ),
+            x=torch.rand(batch.coords.shape[0], self.output_dim, device=device),
             batch=batch.batch,
         )
         node_embedding = node_embedding[batch_mask]
@@ -275,9 +273,14 @@ class EvolutionaryScaleModeling(nn.Module):
 
         if self.mlp_post_embed:
             # combine ESM embeddings with node features
-            node_embedding = self.mlp(
-                torch.concatenate([node_embedding, batch.x], dim=-1)
-            )
+            if batch.x.shape[0] == 39:
+                node_embedding = self.mlp(
+                    torch.concatenate([node_embedding, batch.x[:, :16]], dim=-1)
+                )
+            else:
+                node_embedding = self.mlp(
+                    torch.concatenate([node_embedding, batch.x], dim=-1)
+                )
 
         graph_embedding = self.readout(node_embedding, batch.batch)
 

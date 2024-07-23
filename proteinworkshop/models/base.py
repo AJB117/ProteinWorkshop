@@ -39,9 +39,7 @@ class BaseModel(L.LightningModule, abc.ABC):
         ...
 
     @abc.abstractmethod
-    def training_step(
-        self, batch: Batch, batch_idx: torch.Tensor
-    ) -> torch.Tensor:
+    def training_step(self, batch: Batch, batch_idx: torch.Tensor) -> torch.Tensor:
         """Implement training step.
 
         :param batch: Mini-batch of data.
@@ -54,9 +52,7 @@ class BaseModel(L.LightningModule, abc.ABC):
         ...
 
     @abc.abstractmethod
-    def validation_step(
-        self, batch: Batch, batch_idx: torch.Tensor
-    ) -> torch.Tensor:
+    def validation_step(self, batch: Batch, batch_idx: torch.Tensor) -> torch.Tensor:
         """Implement validation step.
 
         :param batch: Mini-batch of data.
@@ -114,9 +110,7 @@ class BaseModel(L.LightningModule, abc.ABC):
         for output in self.config.task.supervise_on:
             if output == "node_label":
                 labels["node_label"] = batch.node_y
-                if isinstance(
-                    self.losses["node_label"], torch.nn.BCEWithLogitsLoss
-                ):
+                if isinstance(self.losses["node_label"], torch.nn.BCEWithLogitsLoss):
                     labels["node_label"] = F.one_hot(
                         labels["node_label"],
                         num_classes=self.config.dataset.num_classes,
@@ -124,9 +118,7 @@ class BaseModel(L.LightningModule, abc.ABC):
             elif output == "graph_label":
                 labels["graph_label"] = batch.graph_y
                 if (
-                    isinstance(
-                        self.losses["graph_label"], torch.nn.BCEWithLogitsLoss
-                    )
+                    isinstance(self.losses["graph_label"], torch.nn.BCEWithLogitsLoss)
                     and batch.graph_y.ndim == 1
                 ):
                     labels["graph_label"] = F.one_hot(
@@ -178,9 +170,7 @@ class BaseModel(L.LightningModule, abc.ABC):
         return Label(labels)
 
     @typechecker
-    def compute_loss(
-        self, y_hat: ModelOutput, y: Label
-    ) -> Dict[str, torch.Tensor]:
+    def compute_loss(self, y_hat: ModelOutput, y: Label) -> Dict[str, torch.Tensor]:
         """
         Compute loss by iterating over all outputs.
 
@@ -217,13 +207,9 @@ class BaseModel(L.LightningModule, abc.ABC):
 
         if self.config.get("scheduler"):
             logger.info("Instantiating scheduler...")
-            scheduler = hydra.utils.instantiate(
-                self.config.scheduler, optimiser
-            )
+            scheduler = hydra.utils.instantiate(self.config.scheduler, optimiser)
             scheduler = OmegaConf.to_container(scheduler)
-            scheduler["scheduler"] = scheduler["scheduler"](
-                optimizer=optimiser
-            )
+            scheduler["scheduler"] = scheduler["scheduler"](optimizer=optimiser)
             optimiser_config = {
                 "optimizer": optimiser,
                 "lr_scheduler": scheduler,
@@ -254,9 +240,7 @@ class BaseModel(L.LightningModule, abc.ABC):
             decoders[output_head] = hydra.utils.instantiate(cfg)
         return decoders
 
-    def configure_losses(
-        self, loss_dict: Dict[str, str]
-    ) -> Dict[str, Callable]:
+    def configure_losses(self, loss_dict: Dict[str, str]) -> Dict[str, Callable]:
         """
         Configures losses from config. Returns a dictionary of losses mapping
         each output name to its respective loss function.
@@ -354,9 +338,7 @@ class BaseModel(L.LightningModule, abc.ABC):
         setattr(self, "metric_names", metric_names)
 
     @typechecker
-    def log_metrics(
-        self, loss, y_hat: ModelOutput, y: Label, stage: str, batch: Batch
-    ):
+    def log_metrics(self, loss, y_hat: ModelOutput, y: Label, stage: str, batch: Batch):
         """
         Logs metrics to logger.
 
@@ -411,9 +393,17 @@ class BenchMarkModel(BaseModel):
         logger.info("Instantiating encoder...")
         self.encoder: nn.Module = hydra.utils.instantiate(cfg.encoder)
         logger.info(self.encoder)
+        # self.encoder = self.encoder.to(
+        #     torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # )
 
         logger.info("Instantiating decoders...")
         self.decoder: nn.ModuleDict = self._build_output_decoders()
+        # send decoder to device
+        # self.decoder = self.decoder.to(
+        #     torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # )
+
         logger.info(self.decoder)
 
         logger.info("Instantiating losses...")
@@ -436,9 +426,7 @@ class BenchMarkModel(BaseModel):
         logger.info(self.featuriser)
 
         logger.info("Instantiating task transform...")
-        self.task_transform = hydra.utils.instantiate(
-            cfg.get("task.transform")
-        )
+        self.task_transform = hydra.utils.instantiate(cfg.get("task.transform"))
         logger.info(self.task_transform)
 
         self.save_hyperparameters()
@@ -460,9 +448,7 @@ class BenchMarkModel(BaseModel):
             ]
             for p in proteins:
                 setattr(p, "x", torch.zeros(p.coords.shape[0]))
-                setattr(
-                    p, "seq_pos", torch.arange(p.coords.shape[0]).unsqueeze(-1)
-                )
+                setattr(p, "seq_pos", torch.arange(p.coords.shape[0]).unsqueeze(-1))
             batch = ProteinBatch.from_data_list(proteins)
             return self.featurise(batch)
 
@@ -501,16 +487,12 @@ class BenchMarkModel(BaseModel):
                     emb_type = self.decoder[
                         output_head
                     ].input  # node_embedding or graph_embedding
-                    output[output_head] = self.decoder[output_head](
-                        output[emb_type]
-                    )
+                    output[output_head] = self.decoder[output_head](output[emb_type])
 
         return self.compute_output(output, batch)
 
     @typechecker
-    def transform_encoder_output(
-        self, output: EncoderOutput, batch
-    ) -> EncoderOutput:
+    def transform_encoder_output(self, output: EncoderOutput, batch) -> EncoderOutput:
         """
         Modifies graph encoder output.
 
@@ -632,7 +614,7 @@ class BenchMarkModel(BaseModel):
         skip_flag = torch.zeros(
             (), device=self.device, dtype=torch.bool
         )  # NOTE: for skipping batches in a multi-device setting
-        
+
         try:
             y = self.get_labels(batch)
             y_hat = self(batch)
@@ -657,7 +639,7 @@ class BenchMarkModel(BaseModel):
             else:
                 if not torch_dist.is_initialized():
                     raise e
-                
+
         # NOTE: for skipping batches in a multi-device setting
         # credit: https://github.com/Lightning-AI/lightning/issues/5243#issuecomment-1553404417
         if torch_dist.is_initialized():
@@ -761,11 +743,15 @@ class BenchMarkModel(BaseModel):
             loss.backward(*args, **kwargs)
         except Exception as e:
             skip_flag = torch.ones((), device=self.device, dtype=torch.bool)
-            logger.warning(f"Failed the backward pass. Skipping it for the current rank due to: {e}")
+            logger.warning(
+                f"Failed the backward pass. Skipping it for the current rank due to: {e}"
+            )
             for p in self.trainer.model.parameters():
                 if p.grad is not None:
                     del p.grad
-            logger.warning("Finished cleaning up all gradients following the failed backward pass.")
+            logger.warning(
+                "Finished cleaning up all gradients following the failed backward pass."
+            )
             if "out of memory" not in str(e) and not torch_dist.is_initialized():
                 raise e
 

@@ -101,7 +101,7 @@ def get_input_dim(
         "sequence_distance": 1,
         # TODO fill-in remaining scalar edge features
         ### vector edge features ###
-        "edge_vectors": 1
+        "edge_vectors": 1,
         # TODO fill-in remaining vector edge features
     }
 
@@ -152,9 +152,7 @@ def get_loss(
 ) -> Callable:
     """Return the loss function based on the name."""
     if name == "cross_entropy":
-        return nn.CrossEntropyLoss(
-            label_smoothing=smoothing, weight=class_weights
-        )
+        return nn.CrossEntropyLoss(label_smoothing=smoothing, weight=class_weights)
     if name == "bce":
         return nn.BCEWithLogitsLoss(weight=class_weights)
     elif name == "nll_loss":
@@ -179,9 +177,7 @@ def centralize(
     key: str,
     batch_index: torch.Tensor,
     node_mask: Optional[Bool[torch.Tensor, " n_nodes"]] = None,
-) -> Tuple[
-    torch.Tensor, torch.Tensor
-]:  # note: cannot make assumptions on output shape
+) -> Tuple[torch.Tensor, torch.Tensor]:  # note: cannot make assumptions on output shape
     if node_mask is not None:
         # derive centroid of each batch element
         entities_centroid = torch_scatter.scatter(
@@ -194,9 +190,7 @@ def centralize(
         )
         masked_values = torch.ones_like(batch[key]) * torch.inf
         values = batch[key][node_mask]
-        masked_values[node_mask] = (
-            values - entities_centroid[batch_index][node_mask]
-        )
+        masked_values[node_mask] = values - entities_centroid[batch_index][node_mask]
         entities_centered = masked_values
 
     else:
@@ -241,18 +235,14 @@ def localize(
         edge_mask = node_mask[row] & node_mask[col]
 
         pos_diff = (
-            torch.ones((edge_index.shape[1], 3), device=edge_index.device)
-            * torch.inf
+            torch.ones((edge_index.shape[1], 3), device=edge_index.device) * torch.inf
         )
         pos_diff[edge_mask] = pos[row][edge_mask] - pos[col][edge_mask]
 
         pos_cross = (
-            torch.ones((edge_index.shape[1], 3), device=edge_index.device)
-            * torch.inf
+            torch.ones((edge_index.shape[1], 3), device=edge_index.device) * torch.inf
         )
-        pos_cross[edge_mask] = torch.cross(
-            pos[row][edge_mask], pos[col][edge_mask]
-        )
+        pos_cross[edge_mask] = torch.cross(pos[row][edge_mask], pos[col][edge_mask])
     else:
         pos_diff = pos[row] - pos[col]
         pos_cross = torch.cross(pos[row], pos[col])
@@ -262,9 +252,7 @@ def localize(
         if node_mask is not None:
             norm = torch.ones((edge_index.shape[1], 1), device=pos_diff.device)
             norm[edge_mask] = (
-                torch.sqrt(
-                    torch.sum((pos_diff[edge_mask] ** 2), dim=1).unsqueeze(1)
-                )
+                torch.sqrt(torch.sum((pos_diff[edge_mask] ** 2), dim=1).unsqueeze(1))
             ) + 1
         else:
             norm = torch.sqrt(torch.sum(pos_diff**2, dim=1).unsqueeze(1)) + 1
@@ -272,28 +260,19 @@ def localize(
 
         # derive and apply normalization factor for `pos_cross`
         if node_mask is not None:
-            cross_norm = torch.ones(
-                (edge_index.shape[1], 1), device=pos_cross.device
-            )
+            cross_norm = torch.ones((edge_index.shape[1], 1), device=pos_cross.device)
             cross_norm[edge_mask] = (
-                torch.sqrt(
-                    torch.sum((pos_cross[edge_mask]) ** 2, dim=1).unsqueeze(1)
-                )
+                torch.sqrt(torch.sum((pos_cross[edge_mask]) ** 2, dim=1).unsqueeze(1))
             ) + 1
         else:
-            cross_norm = (
-                torch.sqrt(torch.sum(pos_cross**2, dim=1).unsqueeze(1))
-            ) + 1
+            cross_norm = (torch.sqrt(torch.sum(pos_cross**2, dim=1).unsqueeze(1))) + 1
         pos_cross = pos_cross / cross_norm
 
     if node_mask is not None:
         pos_vertical = (
-            torch.ones((edge_index.shape[1], 3), device=edge_index.device)
-            * torch.inf
+            torch.ones((edge_index.shape[1], 3), device=edge_index.device) * torch.inf
         )
-        pos_vertical[edge_mask] = torch.cross(
-            pos_diff[edge_mask], pos_cross[edge_mask]
-        )
+        pos_vertical[edge_mask] = torch.cross(pos_diff[edge_mask], pos_cross[edge_mask])
     else:
         pos_vertical = torch.cross(pos_diff, pos_cross)
 
@@ -323,7 +302,112 @@ def safe_norm(
 
 
 @jaxtyped(typechecker=typechecker)
-def is_identity(
-    nonlinearity: Optional[Union[Callable, nn.Module]] = None
-) -> bool:
+def is_identity(nonlinearity: Optional[Union[Callable, nn.Module]] = None) -> bool:
     return nonlinearity is None or isinstance(nonlinearity, nn.Identity)
+
+
+"""
+TorchDrug functions for variadic inputs, credit to https://torchdrug.ai/
+"""
+
+
+def multi_slice_mask(starts, ends, length):
+    """
+    Compute the union of multiple slices into a binary mask.
+
+    Example::
+
+        >>> mask = multi_slice_mask(torch.tensor([0, 1, 4]), torch.tensor([2, 3, 6]), 6)
+        >>> assert (mask == torch.tensor([1, 1, 1, 0, 1, 1])).all()
+
+    Parameters:
+        starts (LongTensor): start indexes of slices
+        ends (LongTensor): end indexes of slices
+        length (int): length of mask
+    """
+    values = torch.cat([torch.ones_like(starts), -torch.ones_like(ends)])
+    slices = torch.cat([starts, ends])
+    if slices.numel():
+        assert slices.min() >= 0 and slices.max() <= length
+    mask = torch_scatter.scatter_add(values, slices, dim=0, dim_size=length + 1)[:-1]
+    mask = mask.cumsum(0).bool()
+    return mask
+
+
+def _extend(data, size, input, input_size):
+    """
+    Extend variadic-sized data with variadic-sized input.
+    This is a variadic variant of ``torch.cat([data, input], dim=-1)``.
+
+    Example::
+
+        >>> data = torch.tensor([0, 1, 2, 3, 4])
+        >>> size = torch.tensor([3, 2])
+        >>> input = torch.tensor([-1, -2, -3])
+        >>> input_size = torch.tensor([1, 2])
+        >>> new_data, new_size = _extend(data, size, input, input_size)
+        >>> assert (new_data == torch.tensor([0, 1, 2, -1, 3, 4, -2, -3])).all()
+        >>> assert (new_size == torch.tensor([4, 4])).all()
+
+    Parameters:
+        data (Tensor): variadic data
+        size (LongTensor): size of data
+        input (Tensor): variadic input
+        input_size (LongTensor): size of input
+
+    Returns:
+        (Tensor, LongTensor): output data, output size
+    """
+    new_size = size + input_size
+    new_cum_size = new_size.cumsum(0)
+    new_data = torch.zeros(
+        new_cum_size[-1], *data.shape[1:], dtype=data.dtype, device=data.device
+    )
+    starts = new_cum_size - new_size
+    ends = starts + size
+    index = multi_slice_mask(starts, ends, new_cum_size[-1])
+    new_data[index] = data
+    new_data[~index] = input
+    return new_data, new_size
+
+
+def variadic_to_padded(input, size, value=0):
+    """
+    Convert a variadic tensor to a padded tensor.
+
+    Suppose there are :math:`N` sets, and the sizes of all sets are summed to :math:`B`.
+
+    Parameters:
+        input (Tensor): input of shape :math:`(B, ...)`
+        size (LongTensor): size of sets of shape :math:`(N,)`
+        value (scalar): fill value for padding
+
+    Returns:
+        (Tensor, BoolTensor): padded tensor and mask
+    """
+    num_sample = len(size)
+    max_size = size.max()
+    starts = torch.arange(num_sample, device=size.device) * max_size
+    ends = starts + size
+    mask = multi_slice_mask(starts, ends, num_sample * max_size)
+    mask = mask.view(num_sample, max_size)
+    shape = (num_sample, max_size) + input.shape[1:]
+    padded = torch.full(shape, value, dtype=input.dtype, device=size.device)
+    padded[mask] = input
+    return padded, mask
+
+
+def padded_to_variadic(padded, size):
+    """
+    Convert a padded tensor to a variadic tensor.
+
+    Parameters:
+        padded (Tensor): padded tensor of shape :math:`(N, ...)`
+        size (LongTensor): size of sets of shape :math:`(N,)`
+    """
+    num_sample, max_size = padded.shape[:2]
+    starts = torch.arange(num_sample, device=size.device) * max_size
+    ends = starts + size
+    mask = multi_slice_mask(starts, ends, num_sample * max_size)
+    mask = mask.view(num_sample, max_size)
+    return padded[mask]

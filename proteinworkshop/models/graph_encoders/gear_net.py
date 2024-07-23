@@ -85,9 +85,7 @@ class GearNet(nn.Module):
             log.info("Using Edge Message Passing")
             self.edge_input_dim = self._get_num_edge_features()
             self.edge_dims = [self.edge_input_dim] + self.dims[:-1]
-            self.spatial_line_graph = gear_net.SpatialLineGraph(
-                self.num_angle_bin
-            )
+            self.spatial_line_graph = gear_net.SpatialLineGraph(self.num_angle_bin)
             self.edge_layers = nn.ModuleList()
             for i in range(len(self.edge_dims) - 1):
                 self.edge_layers.append(
@@ -133,6 +131,59 @@ class GearNet(nn.Module):
             "batch",
         }
 
+    def one_layer_computation(
+        self,
+        batch: Union[Batch, ProteinBatch],
+        i: int,
+        layer_input: torch.Tensor,
+        line_graph: nn.Module,
+        edge_input: torch.Tensor,
+    ) -> torch.Tensor:
+        hidden = self.layers[i](batch, layer_input)
+        if self.short_cut and hidden.shape == layer_input.shape:
+            hidden = hidden + layer_input
+        if self.num_angle_bin:
+            edge_hidden = self.edge_layers[i](line_graph, edge_input)
+            edge_weight = batch.edge_weight.unsqueeze(-1)
+            # node_out = graph.edge_index[:, 1] * self.num_relation + graph.edge_index[:, 2]
+            node_out = (
+                batch.edge_index[1, :] * self.num_relation + batch.edge_index[2, :]
+            )
+            update = scatter_add(
+                edge_hidden * edge_weight,
+                node_out,
+                dim=0,
+                dim_size=batch.num_nodes * self.num_relation,
+            )
+            update = update.view(
+                batch.num_nodes, self.num_relation * edge_hidden.shape[1]
+            )
+            update = self.layers[i].linear(update)
+            update = self.layers[i].activation(update)
+            hidden = hidden + update
+        if self.batch_norm:
+            hidden = self.batch_norms[i](hidden)
+
+        return hidden, edge_hidden
+
+    def setup_forward(self, batch: Union[Batch, ProteinBatch]) -> EncoderOutput:
+        batch.edge_weight = torch.ones(
+            batch.edge_index.shape[1], dtype=torch.float, device=batch.x.device
+        )
+        layer_input = batch.x
+        batch.edge_index = torch.cat([batch.edge_index, batch.edge_type])
+        batch.edge_feature = self.gear_net_edge_features(batch)
+        if self.num_angle_bin:
+            line_graph = self.spatial_line_graph(batch)
+            line_graph.edge_weight = torch.ones(
+                line_graph.edge_index.shape[1],
+                dtype=torch.float,
+                device=batch.x.device,
+            )
+            edge_input = line_graph.x.float()
+
+        return layer_input, edge_input, line_graph, batch
+
     def forward(self, batch: Union[Batch, ProteinBatch]) -> EncoderOutput:
         """Implements the forward pass of the GearNet encoder.
 
@@ -165,34 +216,38 @@ class GearNet(nn.Module):
             edge_input = line_graph.x.float()
 
         for i in range(len(self.layers)):
-            hidden = self.layers[i](batch, layer_input)
-            if self.short_cut and hidden.shape == layer_input.shape:
-                hidden = hidden + layer_input
-            if self.num_angle_bin:
-                edge_hidden = self.edge_layers[i](line_graph, edge_input)
-                edge_weight = batch.edge_weight.unsqueeze(-1)
-                # node_out = graph.edge_index[:, 1] * self.num_relation + graph.edge_index[:, 2]
-                node_out = (
-                    batch.edge_index[1, :] * self.num_relation
-                    + batch.edge_index[2, :]
-                )
-                update = scatter_add(
-                    edge_hidden * edge_weight,
-                    node_out,
-                    dim=0,
-                    dim_size=batch.num_nodes * self.num_relation,
-                )
-                update = update.view(
-                    batch.num_nodes, self.num_relation * edge_hidden.shape[1]
-                )
-                update = self.layers[i].linear(update)
-                update = self.layers[i].activation(update)
-                hidden = hidden + update
-                edge_input = edge_hidden
-            if self.batch_norm:
-                hidden = self.batch_norms[i](hidden)
+            # hidden = self.layers[i](batch, layer_input)
+            # if self.short_cut and hidden.shape == layer_input.shape:
+            #     hidden = hidden + layer_input
+            # if self.num_angle_bin:
+            #     edge_hidden = self.edge_layers[i](line_graph, edge_input)
+            #     edge_weight = batch.edge_weight.unsqueeze(-1)
+            #     # node_out = graph.edge_index[:, 1] * self.num_relation + graph.edge_index[:, 2]
+            #     node_out = (
+            #         batch.edge_index[1, :] * self.num_relation + batch.edge_index[2, :]
+            #     )
+            #     update = scatter_add(
+            #         edge_hidden * edge_weight,
+            #         node_out,
+            #         dim=0,
+            #         dim_size=batch.num_nodes * self.num_relation,
+            #     )
+            #     update = update.view(
+            #         batch.num_nodes, self.num_relation * edge_hidden.shape[1]
+            #     )
+            #     update = self.layers[i].linear(update)
+            #     update = self.layers[i].activation(update)
+            #     hidden = hidden + update
+            #     edge_input = edge_hidden
+            # if self.batch_norm:
+            #     hidden = self.batch_norms[i](hidden)
+            hidden, edge_hidden = self.one_layer_computation(
+                batch, i, layer_input, line_graph, edge_input
+            )
+
             hiddens.append(hidden)
             layer_input = hidden
+            edge_input = edge_hidden
 
         if self.concat_hidden:
             node_feature = torch.cat(hiddens, dim=-1)
@@ -212,9 +267,7 @@ class GearNet(nn.Module):
         dist = 1
         return self.input_dim * 2 + self.num_relation + seq_dist + dist
 
-    def gear_net_edge_features(
-        self, b: Union[Batch, ProteinBatch]
-    ) -> torch.Tensor:
+    def gear_net_edge_features(self, b: Union[Batch, ProteinBatch]) -> torch.Tensor:
         """Compute edge features for the gear net encoder.
 
         - Concatenate node features of the two nodes in each edge
