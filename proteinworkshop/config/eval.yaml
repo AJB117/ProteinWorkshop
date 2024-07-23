@@ -28,6 +28,6 @@ defaults:
   - _self_ # see: https://hydra.cc/docs/upgrades/1.0_to_1.1/default_composition_order/. Adding _self_ at bottom means values in this file override defaults.
 
 # passing checkpoint path is necessary for evaluation
-ckpt_path: ???
+ckpt_path: ""
 
 task_name: "eval"

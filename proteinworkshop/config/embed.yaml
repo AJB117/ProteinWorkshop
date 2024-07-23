@@ -17,7 +17,7 @@ defaults:
   - extras: default
   - hydra: default
   - metrics: default
-  - task: graph_classification
+  - task: multiclass_graph_classification
   - logger: wandb
   - finetune: default
   - debug: null
@@ -35,3 +35,8 @@ cuda_device_index: 0 # if CUDA devices are targeted and available, which availab
 
 embed:
   split: ["train", "val", "test"]
+  save_path: null # path to save embeddings
+
+trainer:
+  accelerator: gpu
+  devices: 1

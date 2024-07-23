@@ -335,10 +335,20 @@ class ProteinDataset(Dataset):
         self.structures = pdb_codes if pdb_codes is not None else pdb_paths
         if self.in_memory:
             logger.info("Reading data into memory")
-            self.data = [
-                torch.load(pathlib.Path(self.root) / "processed" / f)
-                for f in tqdm(self.processed_file_names)
-            ]
+            self.data = []
+            self.bad_idx = []
+
+            for i, f in enumerate(tqdm(self.processed_file_names)):
+                try:
+                    self.data.append(torch.load(Path(self.processed_dir) / f))
+                except Exception as e:
+                    logger.error(f"Error loading {f}: {e}")
+                    self.bad_idx.append(i)
+
+            # self.data = [
+            #     torch.load(pathlib.Path(self.root) / "processed" / f)
+            #     for f in tqdm(self.processed_file_names)
+            # ]
 
     def download(self):
         """

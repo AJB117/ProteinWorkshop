@@ -230,6 +230,9 @@ class FoldClassificationDataModule(ProteinDataModule):
         data = pd.read_csv(
             self.data_dir / f"{split}.txt", sep="\t", header=None
         )
+        print(split)
+        import time
+        time.sleep(1)
 
         logger.info(f"Found {len(data)} original examples in {split}")
         # Assign columns to DataFrame

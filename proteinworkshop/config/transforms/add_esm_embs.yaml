@@ -1,0 +1,5 @@
+add_esm_embs:
+  _target_: proteinworkshop.tasks.add_esm_embeddings.AddESMEmbTransform
+  dataset: null # Dataset to be used for ESM embeddings
+  emb_dir: null # Directory to save ESM embeddings
+  model: "650M" # ESM model to be used

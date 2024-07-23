@@ -1,0 +1,14 @@
+_target_: "proteinworkshop.models.graph_encoders.sequence_struct_interactor.SequenceStructInteractor"
+sequence_model: "ESM-2-650M"
+num_relation: ${resolve_num_edge_types:${features}} # Number of edge types
+input_dim: ${resolve_feature_config_dim:${features},scalar_node_features,${task},true} # Dimension of the input node features
+structure_model: "GearNet"
+num_struct_layers: 6 # Number of layers in the structure model
+n_heads: 8 # Number of attention heads for interaction
+cross_dim: 512 # Dimension of the node embeddings
+norm: "layer" # Whether to use batch norm
+activation: "silu" # Activation function to use
+pool: "sum" # Pooling operation to use
+aggr: "sum"
+residual: True
+strategy: "interspersed"

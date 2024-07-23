@@ -20,6 +20,8 @@ metrics:
     num_labels: ${dataset.num_classes}
   rocauc:
     num_labels: ${dataset.num_classes}
+  f1_max:
+    num_classes: ${dataset.num_classes}
 
 
 callbacks:

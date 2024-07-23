@@ -1,8 +1,10 @@
 """Logging of hyperparameters"""
+
 from typing import Any, Dict
 
 from lightning.pytorch.utilities import rank_zero_only
 from loguru import logger as log
+from torch.nn.parameter import UninitializedParameter
 
 
 @rank_zero_only
@@ -28,13 +30,28 @@ def log_hyperparameters(object_dict: Dict[str, Any]) -> None:
         "task": cfg["task"],
         "encoder": cfg["encoder"],
         "decoder": cfg["decoder"],
-        "model/params/total": sum((p.numel() for p in model.parameters())),
+        "model/params/total": sum(
+            [
+                x.numel() if not isinstance(x, UninitializedParameter) else 0
+                for x in model.parameters()
+            ]
+        ),
+        # sum(
+        #     (
+        #         0 if isinstance(p, UninitializedParameter) else p.numel()
+        #         for p in model.parameters()
+        #     )
+        # ),
     }
     hparams["model/params/trainable"] = sum(
-        p.numel() for p in model.parameters() if p.requires_grad
+        p.numel()
+        for p in model.parameters()
+        if p.requires_grad and not isinstance(p, UninitializedParameter)
     )
     hparams["model/params/non_trainable"] = sum(
-        p.numel() for p in model.parameters() if not p.requires_grad
+        p.numel()
+        for p in model.parameters()
+        if not p.requires_grad and not isinstance(p, UninitializedParameter)
     )
 
     hparams["dataset"] = cfg["dataset"]

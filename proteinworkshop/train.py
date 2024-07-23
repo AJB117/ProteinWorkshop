@@ -2,8 +2,11 @@
 Main module to load and train the model. This should be the program entry
 point.
 """
+
 import copy
+import statistics as st
 import sys
+from collections import defaultdict
 from typing import List, Optional
 
 import graphein
@@ -31,9 +34,37 @@ graphein.verbose(False)
 lt.monkey_patch()
 
 
-def _num_training_steps(
-    train_dataset: ProteinDataLoader, trainer: L.Trainer
-) -> int:
+def format_stats(means_dict, stdevs_dict):
+    # Initialize a list to hold the formatted strings
+    formatted_strings = []
+
+    # Loop through the keys in the means dictionary (assuming both dictionaries share the same keys)
+    for key in means_dict:
+        # Get the mean and standard deviation for the current key
+        mean = means_dict[key]
+        stdev = stdevs_dict[key]
+
+        # Create the formatted string for the current key
+        formatted_strings.append(f"{key}: {mean:.4f} +/- {stdev:.2f}")
+
+    # Join the list of formatted strings into a single string separated by newlines
+    return "\n".join(formatted_strings)
+
+
+def partial_load_state_dict(model, state_dict):
+    model_dict = model.state_dict()
+
+    # Filter out unnecessary keys
+    state_dict = {k: v for k, v in state_dict.items() if k in model_dict}
+
+    # Update the model's state dictionary
+    model_dict.update(state_dict)
+
+    # Load the updated state dictionary back into the model
+    model.load_state_dict(model_dict)
+
+
+def _num_training_steps(train_dataset: ProteinDataLoader, trainer: L.Trainer) -> int:
     """
     Returns total training steps inferred from datamodule and devices.
 
@@ -57,9 +88,7 @@ def _num_training_steps(
 
     num_devices = max(1, trainer.num_devices)
     effective_batch_size = (
-        train_dataset.batch_size
-        * trainer.accumulate_grad_batches
-        * num_devices
+        train_dataset.batch_size * trainer.accumulate_grad_batches * num_devices
     )
     return (dataset_size // effective_batch_size) * trainer.max_epochs
 
@@ -96,12 +125,8 @@ def train_model(
     # set seed for random number generators in pytorch, numpy and python.random
     L.seed_everything(cfg.seed)
 
-    log.info(
-        f"Instantiating datamodule: <{cfg.dataset.datamodule._target_}..."
-    )
-    datamodule: L.LightningDataModule = hydra.utils.instantiate(
-        cfg.dataset.datamodule
-    )
+    log.info(f"Instantiating datamodule: <{cfg.dataset.datamodule._target_}...")
+    datamodule: L.LightningDataModule = hydra.utils.instantiate(cfg.dataset.datamodule)
 
     log.info("Instantiating callbacks...")
     callbacks: List[Callback] = utils.callbacks.instantiate_callbacks(
@@ -113,7 +138,14 @@ def train_model(
 
     log.info("Instantiating trainer...")
     trainer: L.Trainer = hydra.utils.instantiate(
-        cfg.trainer, callbacks=callbacks, logger=logger
+        cfg.trainer,
+        callbacks=callbacks,
+        logger=logger,
+        accelerator="gpu",
+        devices=1,
+        enable_progress_bar=True
+        if cfg["callbacks"].get("rich_progress_bar")
+        else False,
     )
 
     if cfg.get("scheduler"):
@@ -123,15 +155,9 @@ def train_model(
             and cfg.scheduler.interval == "step"
         ):
             datamodule.setup()  # type: ignore
-            num_steps = _num_training_steps(
-                datamodule.train_dataloader(), trainer
-            )
-            log.info(
-                f"Setting number of training steps in scheduler to: {num_steps}"
-            )
-            cfg.scheduler.scheduler.warmup_epochs = (
-                num_steps / trainer.max_epochs
-            )
+            num_steps = _num_training_steps(datamodule.train_dataloader(), trainer)
+            log.info(f"Setting number of training steps in scheduler to: {num_steps}")
+            cfg.scheduler.scheduler.warmup_epochs = num_steps / trainer.max_epochs
             cfg.scheduler.scheduler.max_epochs = num_steps
             log.info(cfg.scheduler)
 
@@ -147,6 +173,8 @@ def train_model(
         datamodule.setup(stage="lazy_init")  # type: ignore
         batch = next(iter(datamodule.val_dataloader()))
         log.info(f"Unfeaturized batch: {batch}")
+        batch = batch.to(torch.device("cuda"))
+        model = model.to(torch.device("cuda"))
         batch = model.featurise(batch)
         log.info(f"Featurized batch: {batch}")
         log.info(f"Example labels: {model.get_labels(batch)}")
@@ -179,27 +207,77 @@ def train_model(
 
     if cfg.get("task_name") == "train":
         log.info("Starting training!")
-        trainer.fit(
-            model=model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path")
-        )
+        if cfg.get("ckpt_path"):
+            partial_load_state_dict(
+                model, torch.load(cfg.get("ckpt_path"))["state_dict"]
+            )
+            log.info("Loaded model checkpoint at ", cfg.get("ckpt_path"))
+        # trainer.fit(model=model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path"))
+        trainer.fit(model=model, datamodule=datamodule, ckpt_path=None)
 
     if cfg.get("test"):
         log.info("Starting testing!")
         if hasattr(datamodule, "test_dataset_names"):
+            test_metrics = []
             splits = datamodule.test_dataset_names
+            # import pdb
+            # pdb.set_trace()
             wandb_logger = copy.deepcopy(trainer.logger)
             for i, split in enumerate(splits):
-                dataloader = datamodule.test_dataloader(split)
-                trainer.logger = False
-                log.info(f"Testing on {split} ({i+1} / {len(splits)})...")
-                results = trainer.test(
-                    model=model, dataloaders=dataloader, ckpt_path="best"
-                )[0]
-                results = {f"{k}/{split}": v for k, v in results.items()}
-                log.info(f"{split}: {results}")
-                wandb_logger.log_metrics(results)
+                try:
+                    dataloader = datamodule.test_dataloader(split)
+                    trainer.logger = False
+                    log.info(f"Testing on {split} ({i+1} / {len(splits)})...")
+                    try:
+                        results = trainer.test(
+                            model=model, dataloaders=dataloader, ckpt_path="best"
+                        )[0]
+                    except ValueError:  # if no best checkpoint is found
+                        partial_load_state_dict(
+                            model, torch.load(cfg.get("ckpt_path"))["state_dict"]
+                        )
+                        results = trainer.test(
+                            model=model,
+                            dataloaders=dataloader,
+                            ckpt_path=None,
+                        )[0]
+
+                    test_metrics.append(results)
+                    results = {f"{k}/{split}": v for k, v in results.items()}
+
+                    log.info(f"{split}: {results}")
+                    wandb_logger.log_metrics(results)
+                except Exception as e:
+                    print("Error: ", e)
+                    continue
+
+            test_means = defaultdict(list)
+            test_stdevs = {}
+
+            for result in test_metrics:
+                for k, v in result.items():
+                    test_means[k].append(v)
+
+            for k, v in test_means.items():
+                test_stdevs[k] = st.stdev(v)
+                test_means[k] = st.mean(v)
+
+            test_means_stdevs = {f"{k}/mean": v for k, v in test_means.items()}
+            test_means_stdevs.update({f"{k}/stdev": v for k, v in test_stdevs.items()})
+
+            log.info(
+                f"Mean and stdev across all splits: {format_stats(test_means, test_stdevs)}"
+            )
+            wandb_logger.log_metrics(test_means_stdevs)
+
         else:
-            trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
+            try:
+                trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
+            except ValueError:  # if no best checkpoint is found
+                partial_load_state_dict(
+                    model, torch.load(cfg.get("ckpt_path"))["state_dict"]
+                )
+                trainer.test(model=model, datamodule=datamodule, ckpt_path=None)
 
 
 # Load hydra config from yaml files and command line arguments.

@@ -1,7 +1,7 @@
 _target_: "proteinworkshop.models.graph_encoders.esm_embeddings.EvolutionaryScaleModeling"
-path: ${env.paths.root_dir}/esm/
+path: ${env.paths.data}/esm/
 model: "ESM-2-650M"
 readout: "mean"
-mlp_post_embed: False
+mlp_post_embed: True
 dropout: 0.1
 finetune: False

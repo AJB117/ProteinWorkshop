@@ -50,7 +50,8 @@ class GeneOntologyDataset(ProteinDataModule):
         overwrite: bool = False,
     ) -> None:
         super().__init__()
-        self.pdb_dir = pdb_dir
+        # self.pdb_dir = pdb_dir
+        self.pdb_dir = "/scratch/zqe3cg/protein-data-pdb/pdb"
         self.data_dir = Path(path)
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir)
@@ -285,7 +286,7 @@ class GeneOntologyDataset(ProteinDataModule):
         data["label"] = data[0].map(class_map)
         data.columns = ["pdb", "label"]
 
-        to_drop = ["5EXC-I"]
+        to_drop = ["5EXC-I", "1JHW-A"]
         data = data.loc[~data["pdb"].isin(to_drop)]
 
         data["chain"] = data["pdb"].str[5:]

@@ -7,6 +7,9 @@ defaults:
       - f1_max
   - override /decoder:
       - graph_label
+  - override /transforms:
+      - remove_missing_ca
+      - add_esm_embs
 
 callbacks:
   early_stopping:

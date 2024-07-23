@@ -78,18 +78,22 @@ def download_pdb_mmtf(
     if not os.path.isdir(mmtf_dir):
         os.mkdir(mmtf_dir)
 
-    def catched_rcsb_fetch(pdb_id, max_retries=5, retry_interval=100):
+    def catched_rcsb_fetch(pdb_id, max_retries=30, retry_interval=500):
         data = None
         for retry_idx in range(max_retries):
             try:
-                data = rcsb.fetch(pdb_id, format="mmtf", target_path=mmtf_dir)
+                data = rcsb.fetch(pdb_id, format="pdb", target_path=mmtf_dir)
                 break
             except Exception as e:
                 logging.warn(f"Attempt {retry_idx} to fetch pdb_id {pdb_id} failed: {e}")
+                if "invalid" in str(e).lower():
+                    return data
+
             time.sleep(retry_interval/1000)
             
         if data is None:
             logging.warn(f"Failed to fetch pdb_id {pdb_id}")
+
         return data
 
     # Download all PDB IDs with parallelized HTTP requests
@@ -120,9 +124,12 @@ def download_pdb_mmtf(
                 pbar.set_description(
                     f"Adding downloaded PDB {pdb_id} to {f'{mmtf_dir}.tar'}"
                 )
-                file.add(
-                    os.path.join(mmtf_dir, f"{pdb_id}.mmtf"), f"{pdb_id}.mmtf"
-                )
+                try:
+                    file.add(
+                        os.path.join(mmtf_dir, f"{pdb_id}.pdb"), f"{pdb_id}.pdb"
+                    )
+                except FileNotFoundError:
+                    logging.warn(f"Could not find file {pdb_id}.pdb")
 
     ### File access for analysis ###
 
