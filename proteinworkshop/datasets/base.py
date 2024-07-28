@@ -1,4 +1,5 @@
 """Base classes for protein structure datamodules and datasets."""
+
 import copy
 import os
 import pathlib
@@ -65,9 +66,7 @@ class ProteinDataModule(L.LightningDataModule, ABC):
         L.LightningDataModule
     """
 
-    prepare_data_per_node = (
-        True  # class default for lighting 2.0 compatability
-    )
+    prepare_data_per_node = True  # class default for lighting 2.0 compatability
 
     @abstractmethod
     def download(self):
@@ -311,7 +310,7 @@ class ProteinDataset(Dataset):
         self.chains = chains
         self.node_labels = node_labels
         self.graph_labels = graph_labels
-        self.format = format
+        self.format = "pdb"
         self.root = root
         self.in_memory = in_memory
         self.store_het = store_het
@@ -381,9 +380,7 @@ class ProteinDataset(Dataset):
                     pdb
                     for pdb in self.pdb_codes
                     if not (
-                        os.path.exists(
-                            Path(self.raw_dir) / f"{pdb}.{self.format}"
-                        )
+                        os.path.exists(Path(self.raw_dir) / f"{pdb}.{self.format}")
                         or os.path.exists(
                             Path(self.raw_dir) / f"{pdb}.{self.format}.gz"
                         )
@@ -393,13 +390,10 @@ class ProteinDataset(Dataset):
             to_download = list(set(to_download))
             logger.info(f"Downloading {len(to_download)} structures")
             file_format = (
-                self.format[:-3]
-                if self.format.endswith(".gz")
-                else self.format
+                self.format[:-3] if self.format.endswith(".gz") else self.format
             )
-            download_pdb_multiprocessing(
-                to_download, self.raw_dir, format=file_format
-            )
+            # download_pdb_multiprocessing(to_download, self.raw_dir, format=file_format)
+            download_pdb_multiprocessing(to_download, self.raw_dir, format="pdb")
 
     def len(self) -> int:
         """Return length of the dataset."""
@@ -446,8 +440,7 @@ class ProteinDataset(Dataset):
             return [f"{name}.pt" for name in self.out_names]
         if self.chains is not None:
             return [
-                f"{pdb}_{chain}.pt"
-                for pdb, chain in zip(self.pdb_codes, self.chains)
+                f"{pdb}_{chain}.pt" for pdb, chain in zip(self.pdb_codes, self.chains)
             ]
         else:
             return [f"{pdb}.pt" for pdb in self.pdb_codes]
@@ -470,17 +463,11 @@ class ProteinDataset(Dataset):
                 index_pdb_tuples = [
                     (i, pdb)
                     for i, pdb in enumerate(self.pdb_codes)
-                    if not os.path.exists(
-                        Path(self.processed_dir) / f"{pdb}.pt"
-                    )
+                    if not os.path.exists(Path(self.processed_dir) / f"{pdb}.pt")
                 ]
-            logger.info(
-                f"Processing {len(index_pdb_tuples)} unprocessed structures"
-            )
+            logger.info(f"Processing {len(index_pdb_tuples)} unprocessed structures")
         else:
-            index_pdb_tuples = [
-                (i, pdb) for i, pdb in enumerate(self.pdb_codes)
-            ]
+            index_pdb_tuples = [(i, pdb) for i, pdb in enumerate(self.pdb_codes)]
 
         raw_dir = Path(self.raw_dir)
         for index_pdb_tuple in tqdm(index_pdb_tuples):
@@ -514,12 +501,13 @@ class ProteinDataset(Dataset):
                 fname = self.out_names[i] + ".pt"
             else:
                 fname = (
-                    f"{pdb}.pt"
-                    if self.chains is None
-                    else f"{pdb}_{self.chains[i]}.pt"
+                    f"{pdb}.pt" if self.chains is None else f"{pdb}_{self.chains[i]}.pt"
                 )
 
             graph.id = fname.split(".")[0]
+            graph.id_with_chain = (
+                f"{pdb}_{self.chains[i]}" if self.chains is not None else pdb
+            )  # type: ignore
 
             if self.graph_labels is not None:
                 graph.graph_y = self.graph_labels[i]  # type: ignore
