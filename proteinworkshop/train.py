@@ -142,10 +142,11 @@ def train_model(
         callbacks=callbacks,
         logger=logger,
         accelerator="gpu",
-        devices=1,
-        enable_progress_bar=True
-        if cfg["callbacks"].get("rich_progress_bar")
-        else False,
+        devices=[int(cfg.get("cuda_device_index"))],
+        enable_model_summary=False,
+        # enable_progress_bar=True
+        # if cfg["callbacks"].get("rich_progress_bar")
+        # else False,
     )
 
     if cfg.get("scheduler"):
@@ -173,8 +174,8 @@ def train_model(
         datamodule.setup(stage="lazy_init")  # type: ignore
         batch = next(iter(datamodule.val_dataloader()))
         log.info(f"Unfeaturized batch: {batch}")
-        batch = batch.to(torch.device("cuda"))
-        model = model.to(torch.device("cuda"))
+        batch = batch.to(torch.device(f"cuda:{cfg.get('cuda_device_index')}"))
+        model = model.to(torch.device(f"cuda:{cfg.get('cuda_device_index')}"))
         batch = model.featurise(batch)
         log.info(f"Featurized batch: {batch}")
         log.info(f"Example labels: {model.get_labels(batch)}")
@@ -213,15 +214,19 @@ def train_model(
             )
             log.info("Loaded model checkpoint at ", cfg.get("ckpt_path"))
         # trainer.fit(model=model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path"))
-        trainer.fit(model=model, datamodule=datamodule, ckpt_path=None)
+        # trainer.fit(model=model, datamodule=datamodule, ckpt_path=None)
+        trainer.fit(
+            model=model,
+            train_dataloaders=datamodule.train_dataloader(),
+            val_dataloaders=datamodule.val_dataloader(),
+            ckpt_path=None,
+        )
 
     if cfg.get("test"):
         log.info("Starting testing!")
         if hasattr(datamodule, "test_dataset_names"):
             test_metrics = []
             splits = datamodule.test_dataset_names
-            # import pdb
-            # pdb.set_trace()
             wandb_logger = copy.deepcopy(trainer.logger)
             for i, split in enumerate(splits):
                 try:
