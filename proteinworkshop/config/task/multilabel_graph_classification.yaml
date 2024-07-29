@@ -12,6 +12,7 @@ defaults:
   - override /transforms:
     - remove_missing_ca
     - multihot_label_encoding
+    - add_esm_embs
 
 metrics:
   accuracy:
