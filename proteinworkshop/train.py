@@ -144,9 +144,9 @@ def train_model(
         accelerator="gpu",
         devices=[int(cfg.get("cuda_device_index"))],
         enable_model_summary=False,
-        # enable_progress_bar=True
-        # if cfg["callbacks"].get("rich_progress_bar")
-        # else False,
+        enable_progress_bar=True
+        if cfg["callbacks"].get("rich_progress_bar")
+        else False,
     )
 
     if cfg.get("scheduler"):
