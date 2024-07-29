@@ -47,11 +47,10 @@ def embed(cfg: omegaconf.DictConfig):
     with torch.no_grad():
         datamodule.setup(stage="lazy_init")  # type: ignore
         batch = next(iter(datamodule.val_dataloader()))
+        batch = batch.to(device)
         log.info(f"Unfeaturized batch: {batch}")
         batch = model.featurise(batch)
         log.info(f"Featurized batch: {batch}")
-        model = model.to(device)
-        batch = batch.to(device)
         out = model.forward(batch)
         log.info(f"Model output: {out}")
         del batch, out
@@ -123,6 +122,7 @@ def embed(cfg: omegaconf.DictConfig):
                 out = model.forward(batch)
             node_embeddings = out["node_embedding"]  # TODO: add node embeddings
             graph_embeddings = out["graph_embedding"]
+            assert node_embeddings.shape[0] == batch.x.shape[0]
             # node_embeddings = graph_embeddings.tolist()
             # add graph_embeddings and that graph's node embeddings to the dict
             for i, id in enumerate(ids):
