@@ -10,7 +10,7 @@ defaults:
   - env: default
   - dataset: cath
   - features: ca_seq
-  - encoder: egnn
+  - encoder: sequence_struct_interactor
   - decoder: default
   - transforms: default
   - callbacks: default
@@ -30,4 +30,4 @@ defaults:
 task_name: "train"
 test: False
 #compile: True
-precision: 16
+precision: 32
