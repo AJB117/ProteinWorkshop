@@ -12,7 +12,7 @@ defaults:
   - features: ca
   - encoder: egnn
   - decoder: default
-  - transforms: none
+  - transforms: default
   - callbacks: default
   - extras: default
   - hydra: default
