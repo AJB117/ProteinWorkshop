@@ -1,4 +1,5 @@
 import abc
+import pdb
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Union
 
 import hydra
@@ -393,16 +394,24 @@ class BenchMarkModel(BaseModel):
         logger.info("Instantiating encoder...")
         self.encoder: nn.Module = hydra.utils.instantiate(cfg.encoder)
         logger.info(self.encoder)
-        # self.encoder = self.encoder.to(
-        #     torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        # )
+        self.encoder = self.encoder.to(
+            torch.device(
+                f"cuda:{cfg.get('cuda_device_index')}"
+                if torch.cuda.is_available()
+                else "cpu"
+            )
+        )
 
         logger.info("Instantiating decoders...")
         self.decoder: nn.ModuleDict = self._build_output_decoders()
         # send decoder to device
-        # self.decoder = self.decoder.to(
-        #     torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        # )
+        self.decoder = self.decoder.to(
+            torch.device(
+                f"cuda:{cfg.get('cuda_device_index')}"
+                if torch.cuda.is_available()
+                else "cpu"
+            )
+        )
 
         logger.info(self.decoder)
 
