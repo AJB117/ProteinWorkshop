@@ -32,6 +32,13 @@ def embed(cfg: omegaconf.DictConfig):
     log.info("Instantiating model:... ")
     model: L.LightningModule = BenchMarkModel(cfg)
 
+    # Select CUDA computation device, otherwise default to CPU
+    if cfg.use_cuda_device:
+        device = torch.device(f"cuda:{cfg.cuda_device_index}")
+        model = model.to(device)
+    else:
+        device = torch.device("cpu")
+
     # Initialize lazy layers for parameter counts
     # This is also required for the model to be able to load weights
     # Otherwise lazy layers will have their parameters reset
@@ -43,6 +50,8 @@ def embed(cfg: omegaconf.DictConfig):
         log.info(f"Unfeaturized batch: {batch}")
         batch = model.featurise(batch)
         log.info(f"Featurized batch: {batch}")
+        model = model.to(device)
+        batch = batch.to(device)
         out = model.forward(batch)
         log.info(f"Model output: {out}")
         del batch, out
@@ -79,13 +88,6 @@ def embed(cfg: omegaconf.DictConfig):
     log.info("Freezing decoder!")
     model.decoder = None  # TODO make this controllable by config
 
-    # Select CUDA computation device, otherwise default to CPU
-    if cfg.use_cuda_device:
-        device = torch.device(f"cuda:{cfg.cuda_device_index}")
-        model = model.to(device)
-    else:
-        device = torch.device("cpu")
-
     # Setup datamodule
     datamodule.setup()
 
@@ -99,7 +101,16 @@ def embed(cfg: omegaconf.DictConfig):
     if "val" in cfg.embed.split:
         dataloaders["val"] = datamodule.val_dataloader()
     if "test" in cfg.embed.split:
-        dataloaders["test"] = datamodule.test_dataloader()
+        if "FoldClassification" in cfg.dataset.datamodule._target_:
+            dataloaders["fold"] = datamodule.test_dataloader(split="fold")
+            dataloaders["family"] = datamodule.test_dataloader(split="family")
+            dataloaders["superfamily"] = datamodule.test_dataloader(split="superfamily")
+        elif "GeneOntology" in cfg.dataset.datamodule._target_:
+            splits = ["test_0.3", "test_0.4", "test_0.5", "test_0.7", "test_0.95"]
+            for split in splits:
+                dataloaders[split] = datamodule.test_dataloader(split=split)
+        else:
+            dataloaders["test"] = datamodule.test_dataloader()
 
     for split, dataloader in dataloaders.items():
         log.info(f"Performing embedding for split: {split}")
@@ -108,7 +119,8 @@ def embed(cfg: omegaconf.DictConfig):
             ids = batch.id
             batch = batch.to(device)
             batch = model.featuriser(batch)
-            out = model.forward(batch)
+            with torch.no_grad():
+                out = model.forward(batch)
             node_embeddings = out["node_embedding"]  # TODO: add node embeddings
             graph_embeddings = out["graph_embedding"]
             # node_embeddings = graph_embeddings.tolist()
@@ -121,6 +133,7 @@ def embed(cfg: omegaconf.DictConfig):
 
     # Save embeddings
     torch.save(id_to_embedding, cfg.embed.save_path)
+    log.info(f"Embeddings saved to {cfg.embed.save_path}")
 
 
 # Load hydra config from yaml files and command line arguments.
