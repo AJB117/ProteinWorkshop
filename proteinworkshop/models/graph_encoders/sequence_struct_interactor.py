@@ -7,8 +7,8 @@ import torch.nn as nn
 from graphein.protein.resi_atoms import RESI_THREE_TO_1
 from graphein.protein.tensor.data import ProteinBatch
 from torch_geometric.data import Batch
-from torch_scatter import scatter_add
 from torch_geometric.utils import to_dense_batch
+from torch_scatter import scatter_add
 
 from proteinworkshop.models.utils import (
     get_aggregation,
@@ -19,6 +19,7 @@ from proteinworkshop.types import EncoderOutput
 
 from .esm_embeddings import EvolutionaryScaleModeling
 from .gear_net import GearNet
+
 # from .gvp import GVPGNNModel
 
 
@@ -122,7 +123,9 @@ class SelfAttentionBlock(nn.Module):
         key = self.key(tgt).transpose(0, 1)
         value = self.value(tgt).transpose(0, 1)
 
-        mask = (~mask.bool()).squeeze(-1)
+        if mask is not None:
+            mask = (~mask.bool()).squeeze(-1)
+
         output = self.attn(query, key, value, key_padding_mask=mask)[0].transpose(0, 1)
         # output = self.attn(input, mask)
 
@@ -147,7 +150,7 @@ class SequenceStructInteractor(nn.Module):
         strategy: str = "interspersed",
     ):
         super().__init__()
-        self.sequence_model_name = sequence_model
+        # self.sequence_model_name = sequence_model
         self.sequence_model = EvolutionaryScaleModeling(
             path=os.environ.get("DATA_PATH"),
             model=sequence_model,
@@ -218,8 +221,8 @@ class SequenceStructInteractor(nn.Module):
             "edge_type",
             "edge_attr",
             "num_nodes",
-            "graph_esm_emb",
-            "node_esm_emb"
+            # "graph_esm_emb",
+            "node_esm_emb",
         }
 
     def tokenize(self, batch: Union[Batch, ProteinBatch]) -> torch.Tensor:
@@ -251,7 +254,6 @@ class SequenceStructInteractor(nn.Module):
     def struct_setup(
         self, batch: Union[Batch, ProteinBatch]
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        pdb.set_trace()
         if self.structure_model_name == "GVP":
             vectors = (
                 batch.pos[batch.edge_index[0]] - batch.pos[batch.edge_index[1]]
@@ -292,7 +294,8 @@ class SequenceStructInteractor(nn.Module):
         #     }
         # )
 
-        tokens = self.tokenize(batch)
+        # tokens = self.tokenize(batch)
+
         # x_seq = self.sequence_model.model.embed_tokens(tokens).transpose(0, 1)
 
         # padding_idx = self.sequence_model.model.padding_idx
@@ -306,49 +309,69 @@ class SequenceStructInteractor(nn.Module):
             )
             batch = batch_modified
 
-        if self.strategy == "interspersed":
-            layer_indices = list(
-                i
-                for i in range(self.sequence_model.repr_layer)
-                if i % self.num_struct_layers == 0
-            )
-        elif self.strategy == "last":
-            layer_indices = [self.sequence_model.repr_layer - 1]
-        elif self.strategy == "all":
-            layer_indices = list(range(self.sequence_model.repr_layer))
+        # if self.strategy == "interspersed":
+        #     layer_indices = list(
+        #         i
+        #         for i in range(self.sequence_model.repr_layer)
+        #         if i % self.num_struct_layers == 0
+        #     )
+        # elif self.strategy == "last":
+        #     layer_indices = [self.sequence_model.repr_layer - 1]
+        # elif self.strategy == "all":
+        #     layer_indices = list(range(self.sequence_model.repr_layer))
+
+        # with torch.no_grad():
+        #     x_seqs = list(
+        #         self.sequence_model.model(tokens, repr_layers=layer_indices)[
+        #             "representations"
+        #         ].values()
+        #     )
+
+        # num_residues = torch.tensor([len(x) for x in batch.residues]).to(
+        #     self.structure_model.device
+        # )
+        if batch.x.shape[0] == 39:
+            # pe, _ = variadic_to_padded(batch.x[:, :16], num_residues)
+            pe = batch.x[:, :16]
+        else:
+            # pe, _ = variadic_to_padded(batch.x, num_residues)
+            pe = batch.x
+
+        # if self.strategy == "all":
+        #     x_seq = torch.mean(torch.stack(x_seqs), dim=0)
+        #     x_seq = x_seq[:, 1 : x_seq.shape[1] - 1, :]
+        #     x_seq = self.pe_encoder(torch.cat([x_seq, pe], dim=-1))
+        #     x_seq = self.down_projector_seq(x_seq)
+        # elif self.strategy == "last":
+        #     x_seq = x_seqs[0]
+        #     x_seq = x_seq[:, 1 : x_seq.shape[1] - 1, :]
+        #     x_seq = self.pe_encoder(torch.cat([x_seq, pe], dim=-1))
+        #     x_seq = self.down_projector_seq(x_seq)
+        # pdb.set_trace()
+
+        x_seq = batch.node_esm_emb
 
         with torch.no_grad():
-            x_seqs = list(
-                self.sequence_model.model(tokens, repr_layers=layer_indices)[
-                    "representations"
-                ].values()
-            )
+            from_plm = self.sequence_model(batch)["node_embedding"]
 
-        num_residues = torch.tensor([len(x) for x in batch.residues]).to(
-            self.structure_model.device
-        )
-        if batch.x.shape[0] == 39:
-            pe, _ = variadic_to_padded(batch.x[:, :16], num_residues)
-        else:
-            pe, _ = variadic_to_padded(batch.x, num_residues)
+        # if x_seq.shape[0] != pe.shape[0]:
+        #     pdb.set_trace()
+        #     x_seq = x_seq[:-1, :]
 
-        if self.strategy == "all":
-            x_seq = torch.mean(torch.stack(x_seqs), dim=0)
-            x_seq = x_seq[:, 1 : x_seq.shape[1] - 1, :]
-            x_seq = self.pe_encoder(torch.cat([x_seq, pe], dim=-1))
-            x_seq = self.down_projector_seq(x_seq)
-        elif self.strategy == "last":
-            x_seq = x_seqs[0]
-            x_seq = x_seq[:, 1 : x_seq.shape[1] - 1, :]
-            x_seq = self.pe_encoder(torch.cat([x_seq, pe], dim=-1))
-            x_seq = self.down_projector_seq(x_seq)
+        # x_seq = self.pe_encoder(torch.cat([x_seq, pe], dim=-1))
+        x_seq = self.pe_encoder(torch.cat([from_plm, pe], dim=-1))
+        x_seq = self.down_projector_seq(x_seq)
 
         for i in range(self.num_struct_layers):
-            if self.strategy == "interspersed":
-                x_seq = x_seqs[i]
-                x_seq = x_seq[:, 1 : x_seq.shape[1] - 1, :]
-                x_seq = self.pe_encoder(torch.cat([x_seq, pe], dim=-1))
-                x_seq = self.down_projector_seq(x_seq)
+            # if self.strategy == "interspersed":
+            # x_seq = x_seqs[i]
+            # x_seq = batch.node_esm_emb[1:, :]
+            # x_seq = torch.cat([self.embs[x][1] for x in batch.id_with_chain]).to(
+            #     batch.x.device
+            # )[1:, :]
+            # x_seq = torch.cat([self.embs[x][1] for x in batch.id]).to(
+            #     batch.x.device
+            # )[1:, :]
 
             if self.structure_model_name == "GVP":
                 x_struct_V, x_struct_E = self.structure_model.layers[i](
@@ -359,16 +382,23 @@ class SequenceStructInteractor(nn.Module):
                     batch, i, x_struct_V, line_graph, x_struct_E
                 )
 
-            n = x_seq.shape[1]
-
-            x_struct_V, mask_struct_ = variadic_to_padded(x_struct_V, num_residues)
+            # x_struct_V, mask_struct_ = variadic_to_padded(x_struct_V, num_residues)
 
             # cat = torch.cat([x_seq, x_struct_V], dim=1)
             # mask_seq = padding_mask[:, 1 : padding_mask.shape[1] - 1]
             # mask = torch.cat([mask_seq, mask_struct_], dim=1)
             # attn_output = self.interactors[layer_idx_struct](cat, mask)
 
-            x_struct_V = self.interactors[i](x_seq, x_struct_V, mask_struct_)
+            # x_struct_V = self.interactors[i](x_seq, x_struct_V, mask_struct_)
+            num_residues = torch.tensor([len(x) for x in batch.residues]).to(
+                self.structure_model.device
+            )
+            # pdb.set_trace()
+            x_seq_var = variadic_to_padded(x_seq, num_residues)
+            x_struct_var = variadic_to_padded(x_seq, num_residues)
+            x_struct_V = self.interactors[i](
+                x_seq_var[0], x_struct_var[0], x_struct_var[1]
+            )
 
             # x_seq, x_struct_V = torch.split(attn_output, n, dim=1)
             # x_struct_V = torch.mean(torch.stack([x_seq, x_struct_V]), dim=0)
@@ -403,9 +433,9 @@ class SequenceStructInteractor(nn.Module):
         #             )
 
         #         n = x_seq_down.shape[1]
-        #         num_residues = torch.tensor([len(x) for x in batch.residues]).to(
-        #             self.structure_model.device
-        #         )
+        # num_residues = torch.tensor([len(x) for x in batch.residues]).to(
+        #     self.structure_model.device
+        # )
         #         x_struct_V, mask_struct_ = variadic_to_padded(
         #             x_struct_V, num_residues
         #         )  # B x N-2 x F, - start and filler toks

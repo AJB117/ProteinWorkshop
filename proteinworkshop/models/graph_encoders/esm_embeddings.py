@@ -3,6 +3,7 @@
 import os
 from typing import Dict, List, Optional, Set, Tuple, Union
 
+import esm
 import torch
 from beartype import beartype as typechecker
 from graphein.protein.resi_atoms import RESI_THREE_TO_1
@@ -14,7 +15,6 @@ from torch_geometric.data import Batch
 from torch_geometric.utils import to_dense_batch
 from tqdm import tqdm
 
-import esm
 from proteinworkshop.models.utils import get_aggregation
 from proteinworkshop.types import EncoderOutput
 
@@ -83,6 +83,7 @@ class EvolutionaryScaleModeling(nn.Module):
     :param mlp_post_embed (bool): whether to use MLP to combine ESM embeddings with input features
     :param dropout (float): dropout rate for MLP
     :param finetune (bool): whether to finetune ESM model
+    :param device (torch.device or str, optional): device on which to compute and update representations
     """
 
     url: Dict[str, str] = {
@@ -138,11 +139,12 @@ class EvolutionaryScaleModeling(nn.Module):
     def __init__(
         self,
         path: Union[str, os.PathLike],
-        model: str = "ESM-2-650M",
+        model: str = "650M",
         readout: str = "mean",
         mlp_post_embed: bool = True,
         dropout: float = 0.1,
         finetune: bool = False,
+        device: Optional[Union[torch.device, str]] = "cpu",
     ):
         super(EvolutionaryScaleModeling, self).__init__()
         path = os.path.expanduser(path)
@@ -150,6 +152,9 @@ class EvolutionaryScaleModeling(nn.Module):
             os.makedirs(path)
         self.path = path
 
+        self.device = (
+            torch.device(device) if device == "cpu" else torch.device(f"cuda:{device}")
+        )
         _model, alphabet = self.load_weight(path, model)
         self.alphabet = alphabet
         self.output_dim = self.output_dim[model]
@@ -199,7 +204,7 @@ class EvolutionaryScaleModeling(nn.Module):
             raise ValueError(f"Unknown model {model}")
         model_file = _download(self.url[model], path, md5=self.md5[model])
         # model_data = torch.load(model_file, map_location="cpu")
-        model_data = torch.load(model_file, map_location=torch.device("cuda"))
+        model_data = torch.load(model_file, map_location=self.device)
         if model != "ESM-1v" and not model.startswith("ESM-2"):
             regression_model = f"{model}-regression"
             regression_file = _download(
