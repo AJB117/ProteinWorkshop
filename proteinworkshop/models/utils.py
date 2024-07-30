@@ -334,44 +334,7 @@ def multi_slice_mask(starts, ends, length):
     return mask
 
 
-def _extend(data, size, input, input_size):
-    """
-    Extend variadic-sized data with variadic-sized input.
-    This is a variadic variant of ``torch.cat([data, input], dim=-1)``.
-
-    Example::
-
-        >>> data = torch.tensor([0, 1, 2, 3, 4])
-        >>> size = torch.tensor([3, 2])
-        >>> input = torch.tensor([-1, -2, -3])
-        >>> input_size = torch.tensor([1, 2])
-        >>> new_data, new_size = _extend(data, size, input, input_size)
-        >>> assert (new_data == torch.tensor([0, 1, 2, -1, 3, 4, -2, -3])).all()
-        >>> assert (new_size == torch.tensor([4, 4])).all()
-
-    Parameters:
-        data (Tensor): variadic data
-        size (LongTensor): size of data
-        input (Tensor): variadic input
-        input_size (LongTensor): size of input
-
-    Returns:
-        (Tensor, LongTensor): output data, output size
-    """
-    new_size = size + input_size
-    new_cum_size = new_size.cumsum(0)
-    new_data = torch.zeros(
-        new_cum_size[-1], *data.shape[1:], dtype=data.dtype, device=data.device
-    )
-    starts = new_cum_size - new_size
-    ends = starts + size
-    index = multi_slice_mask(starts, ends, new_cum_size[-1])
-    new_data[index] = data
-    new_data[~index] = input
-    return new_data, new_size
-
-
-def variadic_to_padded(input, size, value=0):
+def variadic_to_padded(input: torch.Tensor, size: torch.LongTensor, value=0):
     """
     Convert a variadic tensor to a padded tensor.
 
@@ -397,7 +360,7 @@ def variadic_to_padded(input, size, value=0):
     return padded, mask
 
 
-def padded_to_variadic(padded, size):
+def padded_to_variadic(padded: torch.Tensor, size: torch.LongTensor):
     """
     Convert a padded tensor to a variadic tensor.
 
